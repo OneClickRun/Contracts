@@ -1,0 +1,508 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.20;
+// pragma solidity ^0.8.26;
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+    using SafeERC20 for IERC20;
+
+interface IWETH {
+    function deposit() external payable;
+    function withdraw(uint256) external;
+}
+
+abstract contract UniV3Router {
+    struct ExactInputParam {
+        bytes path;
+        address recipient;
+        // uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+    }
+    function exactInput(ExactInputParam calldata param) external virtual returns(uint256);
+    // struct ExactInputParam {
+    //     address tokenIn;
+    //     address tokenOut;
+    //     uint24 fee;
+    //     address recipient;
+    //     uint256 deadline;
+    //     uint256 amountIn;
+    //     uint256 amountOutMinimum;
+    //     bytes data;
+    // }
+
+    // function exactInput(ExactInputParam calldata param) external virtual returns (uint256);
+}
+
+abstract contract PancakeV3Router {
+    struct ExactInputParam {
+        bytes path;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+    }
+    function exactInput(ExactInputParam calldata param) external virtual returns(uint256);
+}
+
+abstract contract UniV2Router {
+    // function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) external virtual returns (uint256[] memory);
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) external virtual;
+}
+
+abstract contract PointsSystem {
+    function awardPoints(address user, address referral, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut) external virtual;
+}
+
+contract OneClickSwap {
+
+    using Strings for uint256;
+
+    address owner;
+    // MonadTestnet
+    address WETH = address(0x760AfE86e5de5fa0Ee542fc7B7B713e1c5425701);
+    address UniV2RouterAddr = address(0xfB8e1C3b833f9E67a71C859a132cf783b645e436);
+    address UniV3RouterAddr = address(0x4c4eABd5Fb1D1A7234A48692551eAECFF8194CA7);
+    address PancakeV2RouterAddr = address(0x3a3eBAe0Eec80852FBC7B9E824C6756969cc8dc1);
+    address PancakeV3RouterAddr = address(0x46cf505b6ab4aEa209480029c9492cb8014cc6A2);
+    // // Base
+    // address WETH = address(0x4200000000000000000000000000000000000006);
+    // address UniV2RouterAddr = address(0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24);
+    // address UniV3RouterAddr = address(0x2626664c2603336E57B271c5C0b26F421741e481);
+    // address PancakeV2RouterAddr = address(0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb);
+    // address PancakeV3RouterAddr = address(0x1b81D678ffb9C0263b24A97847620C99d213eB14);
+    // address BaseSwapV2RouterAddr = address(0x327Df1E6de05895d2ab08513aaDD9313Fe505d86);
+    // address BaseSwapV3RouterAddr = address(0x1B8eea9315bE495187D873DA7773a874545D9D48);
+    // // BSC
+    // address WETH = address(0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c);
+    // address UniV2RouterAddr = address(0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24);
+    // address UniV3RouterAddr = address(0xB971eF87ede563556b2ED4b1C0b0019111Dd85d2);
+    // address PancakeV2RouterAddr = address(0x10ED43C718714eb63d5aA57B78B54704E256024E);
+    // address PancakeV3RouterAddr = address(0x1b81D678ffb9C0263b24A97847620C99d213eB14);
+    // // Linea
+    // address WETH = address(0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f);
+    // address UniV2RouterAddr = address(0x0000000000000000000000000000000000000000);
+    // address UniV3RouterAddr = address(0x0000000000000000000000000000000000000000);
+    // address PancakeV2RouterAddr = address(0x10ED43C718714eb63d5aA57B78B54704E256024E);
+    // address PancakeV3RouterAddr = address(0x1b81D678ffb9C0263b24A97847620C99d213eB14);
+    // noReentrant
+    bool private locked = false;
+    // routerMap[dexId]=routerAddress
+    mapping (uint256 => address) routerMap;
+    // Pause Contract
+    bool public paused;
+    uint8 dexIdUniV2 = 1;
+    uint8 dexIdUniV3 = 2;
+    uint8 dexIdPancakeV2 = 3;
+    uint8 dexIdPancakeV3 = 4;
+    uint8 dexIdBaseSwapV2 = 5;
+    uint8 dexIdBaseSwapV3 = 6;
+
+    // protocol fee
+    address protocolFeeAccount = address(0x482b32f4dD92E7573C969dB29EF2564b6f2E2Cf5);
+    uint256 protocolFeeRate = 3; // 0.05%
+    uint256 feeDenominator = 10000;
+    // referral fee
+    uint256 referralFeeRate = 5000; // 50%
+
+    // Points System
+    PointsSystem public pointsSystem;
+
+    constructor() {
+        owner = msg.sender;
+        routerMap[dexIdUniV2] = UniV2RouterAddr;
+        routerMap[dexIdUniV3] = UniV3RouterAddr;
+        routerMap[dexIdPancakeV2] = PancakeV2RouterAddr;
+        routerMap[dexIdPancakeV3] = PancakeV3RouterAddr;
+        // routerMap[dexIdBaseSwapV2] = BaseSwapV2RouterAddr;
+        // routerMap[dexIdBaseSwapV3] = BaseSwapV3RouterAddr;
+    }
+
+    receive() external payable {}
+
+    event SwappedEvent(address indexed user, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut, uint256 protocolFee, uint256 referralFee);
+    event RescueTokenEvent(address indexed by, address indexed token, uint256 amount);
+    event RescueEvent(address indexed by, uint256 amount);
+    event FeeEvent(address indexed token, address indexed referral, uint256 referralAmount, uint256 protocolAmount);
+    // event Log(string);
+
+    modifier noReentrant() {
+        require(!locked, "No reentrancy");
+        locked = true;
+        _;
+        locked = false;
+    }
+
+    modifier notPaused() {
+        require(!paused, "Paused");
+        _;
+    }
+    struct AggregatorRouter {
+        uint256 amountIn;
+        uint256 minAmountOut;
+        address tokenIn;
+        address tokenOut;
+        address referral;
+        uint64 deadline;
+        uint8 inEth;
+        uint8 outEth;
+        Router[] routers;
+    }
+
+    struct Router {
+        uint256 amountIn;
+        uint8[] dexs;
+        address[][] paths;
+        bytes[] extraDatas;
+        uint16[] fees;
+    }
+
+    // event LogAggregatorRouter(
+    //     uint256 amountIn,
+    //     uint256 minAmountOut,
+    //     address tokenIn,
+    //     address tokenOut,
+    //     uint64 deadline,
+    //     uint8 inEth,
+    //     uint8 outEth,
+    //     uint routerCount
+    // );
+    // event LogRouter(uint256 amountIn, uint8[] dexs, address[][] paths, bytes[] extraDatas, uint16[] fees);
+    // function logAggregatorRouter(AggregatorRouter memory agg) internal {
+    //     emit LogAggregatorRouter(agg.amountIn,agg.minAmountOut,agg.tokenIn,agg.tokenOut, agg.deadline, agg.inEth, agg.outEth, agg.routers.length);
+
+    //     for (uint i = 0; i < agg.routers.length; i++) {
+
+    //         Router memory r = agg.routers[i];
+    //         emit LogRouter(r.amountIn, r.dexs, r.paths, r.extraDatas, r.fees);
+    //     }
+    // }
+    
+    function swap(bytes calldata data) payable external noReentrant notPaused {
+        AggregatorRouter memory router = _decodeAnySwap(data);
+        // logAggregatorRouter(router);
+        require(router.deadline >= block.timestamp, "Expired");
+        if (router.inEth == 1) {
+            require(router.tokenIn == WETH && msg.value == router.amountIn, "Invalid In");
+        }
+        if (router.outEth == 1) {
+            require(router.tokenOut == WETH, "Invalid Out");
+        }
+        uint256 originAmountIn = router.amountIn;
+        
+        // record token balance
+        _transferIn(router);
+        // swap
+        (uint256 received, uint256 tokenOutBalance) = _executeSwap(router, originAmountIn);
+        require(router.amountIn==0, "Invalid AmountIn");
+        // transfer out
+        (uint256 leftReceived, uint256 protocolFeeAmount, uint256 referralFeeAmount) = _transferOut(router, received, tokenOutBalance);
+        // award points
+        if (address(pointsSystem) != address(0x0)) {
+            pointsSystem.awardPoints(msg.sender, router.referral, router.tokenIn, router.tokenOut, originAmountIn, received);
+        }
+
+        emit SwappedEvent(msg.sender, router.tokenIn, router.tokenOut, originAmountIn, leftReceived, protocolFeeAmount, referralFeeAmount);
+    }
+
+    function _transferIn(AggregatorRouter memory router) private {
+        uint256 tokenInBefore = IERC20(router.tokenIn).balanceOf(address(this));
+        // safe transfer in
+        if (router.inEth == 1) {
+            IWETH(WETH).deposit{value: router.amountIn}();
+        } else {
+            IERC20(router.tokenIn).safeTransferFrom(msg.sender, address(this), router.amountIn);
+        }
+        uint256 tokenInBalance = IERC20(router.tokenIn).balanceOf(address(this));
+        require(tokenInBalance >= tokenInBefore && tokenInBalance-tokenInBefore==router.amountIn, "Invalid Transfer In");
+    }
+
+    function _transferOut(AggregatorRouter memory router, uint256 received, uint256 tokenOutBalance) private returns(uint256 leftReceived, uint256 protocolFeeAmount, uint256 referralFeeAmount) {
+        (leftReceived, protocolFeeAmount, referralFeeAmount) = _handleFee(router.tokenOut, received, router.referral);
+        if (router.outEth == 1) {
+            IWETH(WETH).withdraw(leftReceived);
+            payable(msg.sender).transfer(leftReceived);
+        } else {
+            IERC20(router.tokenOut).safeTransfer(msg.sender, leftReceived);
+        }
+        require(IERC20(router.tokenOut).balanceOf(address(this)) >= tokenOutBalance - received, "Invalid Trasnfer Out");
+        return (leftReceived, protocolFeeAmount, referralFeeAmount);
+    }
+
+    function _handleFee(address token, uint256 amount, address referral) private returns (uint256 leftAmount, uint256 protocolFeeAmount, uint256 referralFeeAmount) {
+        protocolFeeAmount = amount * protocolFeeRate / feeDenominator;
+        if (referral != address(0x0) && referral != msg.sender) {
+            referralFeeAmount = protocolFeeAmount * referralFeeRate / feeDenominator;
+        }
+        leftAmount = amount - protocolFeeAmount;
+        protocolFeeAmount = protocolFeeAmount - referralFeeAmount;
+        IERC20(token).safeTransfer(protocolFeeAccount, protocolFeeAmount);
+        if (referralFeeAmount > 0) {
+            IERC20(token).safeTransfer(referral, referralFeeAmount);
+        }
+        emit FeeEvent(token, referral, referralFeeAmount, protocolFeeAmount);
+        return (leftAmount, protocolFeeAmount, referralFeeAmount);
+    }
+
+    function _executeSwap(AggregatorRouter memory router, uint256 originAmountIn) private returns (uint256,uint256) {
+        uint256 tokenOutBefore = IERC20(router.tokenOut).balanceOf(address(this));
+        uint256[][] memory amountOutsList = new uint256[][](router.routers.length);
+        string memory allReceived = "";
+        for (uint256 i = 0; i < router.routers.length; i++) {
+            // router.amountIn must == sum(router.routers.amountIn)
+            router.amountIn -= router.routers[i].amountIn;
+            require(router.routers[i].dexs.length == router.routers[i].paths.length, "Invalid Dexs Paths");
+            uint256[] memory amountOuts = _executeSingleRouterSwap(router, router.routers[i]);
+            amountOutsList[i] = amountOuts;
+            for (uint256 j = 0; j < amountOuts.length; j++) {
+                allReceived = string(abi.encodePacked(allReceived, amountOuts[j].toString(), ";"));
+            }
+        }
+        uint256 newTokenOutBalance = IERC20(router.tokenOut).balanceOf(address(this));
+        uint256 received = 0;
+        if (router.tokenIn == router.tokenOut) {
+            received += originAmountIn;
+            if (newTokenOutBalance > tokenOutBefore) {
+                received += newTokenOutBalance-tokenOutBefore;
+            } else {
+                received -= tokenOutBefore - newTokenOutBalance;
+            }
+        } else {
+            received = newTokenOutBalance-tokenOutBefore;
+        }
+        require(received >= router.minAmountOut, string(abi.encodePacked("Slippage Err: ", received.toString(), ":", allReceived)));
+        return (received, newTokenOutBalance);
+    }
+
+    function _executeSingleRouterSwap(AggregatorRouter memory router, Router memory singleRouter) private returns(uint256[] memory amountOuts) {
+        address tokenOut;
+        uint256 balanceBefore;
+        uint256 balanceAfter;
+        // bytes memory extraData = new bytes(0);
+        amountOuts = new uint256[](singleRouter.dexs.length);
+
+        uint256 amountIn = singleRouter.amountIn;
+        address tokenIn = router.tokenIn;
+        for (uint256 j = 0; j < singleRouter.dexs.length; j++) {
+            // uint256 amountIn, address[] calldata path, uint256 deadline, bytes calldata extraData
+            // if (singleRouter.extraDatas.length > 0) {
+            //     extraData = singleRouter.extraDatas[j];
+            // }
+            tokenOut = _getAnotherToken(singleRouter.paths[j], tokenIn);
+            balanceBefore = IERC20(tokenOut).balanceOf(address(this));
+            address routerAddr = routerMap[singleRouter.dexs[j]]; //address(factoryMap[singleRouter.dexs[j]]);
+            if (IERC20(tokenIn).allowance(address(this), routerAddr) < amountIn) {
+                IERC20(tokenIn).safeIncreaseAllowance(routerAddr, type(uint256).max);
+            }
+            _distributeSwapToRouters(singleRouter.dexs[j], amountIn, singleRouter.paths[j], tokenIn, tokenOut, router.deadline, singleRouter.fees[j]);
+            
+            balanceAfter = IERC20(tokenOut).balanceOf(address(this));
+            amountIn = balanceAfter - balanceBefore;
+            tokenIn = tokenOut;
+            amountOuts[j] = amountIn;
+            // emit Log(string(abi.encodePacked("AmountOut: ", amountIn.toString())));
+        }
+        require(tokenOut == router.tokenOut, "Invalid Last Out");
+        return amountOuts;
+    }
+
+    function _distributeSwapToRouters(uint8 dexId, uint256 amountIn, address[] memory paths, address tokenIn, address tokenOut, uint256 deadline, uint16 fee) private {
+        if (dexId == dexIdUniV2) {
+            _swapByUniV2(UniV2RouterAddr, amountIn, paths, deadline);
+        } else if (dexId == dexIdUniV3) {
+            _swapByUniV3(UniV3RouterAddr, amountIn, tokenIn, tokenOut, fee);
+        } else if (dexId == dexIdPancakeV2) {
+            _swapByPancakeV2(PancakeV2RouterAddr, amountIn, paths, deadline);
+        } else if (dexId == dexIdPancakeV3) {
+            _swapByPancakeV3(PancakeV3RouterAddr, amountIn, tokenIn, tokenOut, fee, deadline);
+        } 
+        // else if (dexId == dexIdBaseSwapV2) {
+        //     _swapByPancakeV2(BaseSwapV2RouterAddr, amountIn, paths, deadline);
+        // } else if (dexId == dexIdBaseSwapV3) {
+        //     _swapByPancakeV3(BaseSwapV3RouterAddr, amountIn, tokenIn, tokenOut, fee, deadline);
+        // } 
+        else {
+            revert("Invalid DexId");
+        }
+    }
+
+    function _swapByUniV2(address router, uint256 amountIn, address[] memory paths, uint256 deadline) private {
+        // uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline
+        // UniV2Router(router).swapExactTokensForTokens(amountIn, 0, paths, address(this), deadline);
+        UniV2Router(router).swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, paths, address(this), deadline);
+    }
+
+    function _swapByUniV3(address router, uint256 amountIn, address tokenIn, address tokenOut, uint16 fee) private {
+        bytes memory path = abi.encodePacked(tokenIn);
+        path = bytes.concat(path, bytes3(uint24(fee)), bytes20(tokenOut));
+
+        UniV3Router.ExactInputParam memory param = UniV3Router.ExactInputParam(path, address(this), amountIn, 0);
+        UniV3Router(router).exactInput(param);
+    }
+
+    function _swapByPancakeV2(address router, uint256 amountIn, address[] memory paths, uint256 deadline) private {
+        // UniV2Router(router).swapExactTokensForTokens(amountIn, 0, paths, address(this), deadline);
+        UniV2Router(router).swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, paths, address(this), deadline);
+    }
+
+    function _swapByPancakeV3(address router, uint256 amountIn, address tokenIn, address tokenOut, uint16 fee, uint256 deadline) private {
+        bytes memory path = abi.encodePacked(tokenIn);
+        path = bytes.concat(path, bytes3(uint24(fee)), bytes20(tokenOut));
+
+        PancakeV3Router.ExactInputParam memory param = PancakeV3Router.ExactInputParam(path, address(this), deadline, amountIn, 0);
+        PancakeV3Router(router).exactInput(param);
+    }
+
+    function _getAnotherToken(address[] memory paths, address token) pure private returns (address) {
+        require(paths.length == 2, "Invalid Paths");
+        require(paths[0] == token || paths[1] == token, "Invalid Token or Paths");
+        if (paths[0] == token) {
+            return paths[1];
+        }
+        return paths[0];
+    }
+
+    function _decodeAnySwap(bytes calldata data) public pure returns (AggregatorRouter memory result) {
+        uint offset = 0;
+
+        // 1. amountIn
+        result.amountIn = uint256(bytes32(data[offset:offset + 32]));
+        offset += 32;
+        // minAmountOut
+        result.minAmountOut = uint256(bytes32(data[offset:offset + 32]));
+        offset += 32;
+
+        // TokenIn
+        address addr;
+        assembly {
+            addr := shr(96, calldataload(add(data.offset, offset)))
+        }
+        result.tokenIn = addr;
+        offset += 20;
+        assembly {
+            addr := shr(96, calldataload(add(data.offset, offset)))
+        }
+        result.tokenOut = addr;
+        offset += 20;
+        assembly {
+            addr := shr(96, calldataload(add(data.offset, offset)))
+        }
+        result.referral = addr;
+        offset += 20;
+
+        // 2. deadline
+        result.deadline = uint64(bytes8(data[offset:offset + 8]));
+        offset += 8;
+
+        // 3. inEth / outEth
+        result.inEth = uint8(data[offset]);
+        offset += 1;
+
+        result.outEth = uint8(data[offset]);
+        offset += 1;
+
+        // 4. routers count
+        uint8 routersLen = uint8(data[offset]);
+        offset += 1;
+
+        result.routers = new Router[](routersLen);
+
+        for (uint i = 0; i < routersLen; i++) {
+            // --- router.amountIn ---
+            result.routers[i].amountIn = uint256(bytes32(data[offset:offset + 32]));
+            offset += 32;
+
+            // --- dexs[] ---
+            uint8 dexsLen = uint8(data[offset]);
+            offset += 1;
+
+            result.routers[i].dexs = new uint8[](dexsLen);
+            for (uint j = 0; j < dexsLen; j++) {
+                result.routers[i].dexs[j] = uint8(data[offset]);
+                offset += 1;
+            }
+
+            // --- paths[] ---
+            uint8 pathsLen = uint8(data[offset]);
+            offset += 1;
+
+            result.routers[i].paths = new address[][](pathsLen);
+
+            for (uint p = 0; p < pathsLen; p++) {
+                uint8 hopLen = uint8(data[offset]);
+                offset += 1;
+
+                address[] memory path = new address[](hopLen);
+                for (uint h = 0; h < hopLen; h++) {
+                    // address addr;
+                    assembly {
+                        addr := shr(96, calldataload(add(data.offset, offset)))
+                    }
+                    offset += 20;
+                    path[h] = addr;
+                }
+                result.routers[i].paths[p] = path;
+            }
+
+            // --- extraDatas[] ---
+            uint8 extrasLen = uint8(data[offset]);
+            offset += 1;
+
+            result.routers[i].extraDatas = new bytes[](extrasLen);
+            for (uint e = 0; e < extrasLen; e++) {
+                uint8 len = uint8(data[offset]);
+                offset += 1;
+
+                bytes memory b = new bytes(len);
+                for (uint k = 0; k < len; k++) {
+                    b[k] = data[offset];
+                    offset += 1;
+                }
+                result.routers[i].extraDatas[e] = b;
+            }
+
+            // --- fees[] ---
+            uint8 feesLen = uint8(data[offset]);
+            offset += 1;
+            result.routers[i].fees = new uint16[](feesLen);
+            for (uint e = 0; e < feesLen; e++) {
+                result.routers[i].fees[e] = uint16(bytes2(data[offset:offset + 2]));
+                offset += 2;
+            }
+        }
+    }
+
+    function setFeeRate(uint256 _protocolFeeRate, uint256 _referralFeeRate, address _protocolFeeAccount) external {
+        require(msg.sender == owner);
+        require(_protocolFeeRate <= 2000 && _referralFeeRate <= 8000, "Invalid Amount");
+        protocolFeeRate = _protocolFeeRate;
+        protocolFeeAccount = _protocolFeeAccount;
+        referralFeeRate = _referralFeeRate;
+    }
+
+    function setPointsSystem(address _pointSystem) external {
+        require(msg.sender == owner);
+        pointsSystem = PointsSystem(_pointSystem);
+    }
+
+    function setPaused(bool _paused) external {
+        require(msg.sender == owner);
+        paused = _paused;
+    }
+
+    function setOwner(address _owner) external {
+        require(msg.sender == owner);
+        owner = _owner;
+    }
+
+    function rescueToken(address token, uint256 value) external {
+        require(msg.sender == owner);
+        IERC20(token).safeTransfer(msg.sender, value);
+        emit RescueTokenEvent(msg.sender, token, value);
+    }
+
+    function rescue() payable external {
+        require(msg.sender == owner);
+        emit RescueEvent(msg.sender, address(this).balance);
+        payable(msg.sender).transfer(address(this).balance);
+    }
+}
