@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
+// BSC
+// Monad
 pragma solidity ^0.8.20;
 // pragma solidity ^0.8.26;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -49,6 +51,13 @@ abstract contract UniV2Router {
     function swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline) external virtual;
 }
 
+abstract contract CrystalRouter {
+    // function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] memory path, address to, uint256 deadline, address referrer) external returns (uint256[] memory amounts)
+    function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline, address referrer) external virtual returns (uint256[] memory);
+    function getMarket(address tokenA, address tokenB) external virtual view returns (address market);
+
+}
+
 abstract contract PointsSystem {
     function awardPoints(address user, address referral, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut) external virtual;
 }
@@ -64,6 +73,7 @@ contract OneClickSwap {
     address UniV3RouterAddr = address(0x4c4eABd5Fb1D1A7234A48692551eAECFF8194CA7);
     address PancakeV2RouterAddr = address(0x3a3eBAe0Eec80852FBC7B9E824C6756969cc8dc1);
     address PancakeV3RouterAddr = address(0x46cf505b6ab4aEa209480029c9492cb8014cc6A2);
+    address CrystalRouterAddr = address(0x4e77071D619Aa164cA6427547aefA41AC51BE7A0);
     // // Base
     // address WETH = address(0x4200000000000000000000000000000000000006);
     // address UniV2RouterAddr = address(0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24);
@@ -96,6 +106,7 @@ contract OneClickSwap {
     uint8 dexIdPancakeV3 = 4;
     uint8 dexIdBaseSwapV2 = 5;
     uint8 dexIdBaseSwapV3 = 6;
+    uint8 dexIdCrystal = 7;
 
     // protocol fee
     address protocolFeeAccount = address(0x482b32f4dD92E7573C969dB29EF2564b6f2E2Cf5);
@@ -113,6 +124,7 @@ contract OneClickSwap {
         routerMap[dexIdUniV3] = UniV3RouterAddr;
         routerMap[dexIdPancakeV2] = PancakeV2RouterAddr;
         routerMap[dexIdPancakeV3] = PancakeV3RouterAddr;
+        routerMap[dexIdCrystal] = CrystalRouterAddr;
         // routerMap[dexIdBaseSwapV2] = BaseSwapV2RouterAddr;
         // routerMap[dexIdBaseSwapV3] = BaseSwapV3RouterAddr;
     }
@@ -314,7 +326,9 @@ contract OneClickSwap {
             _swapByPancakeV2(PancakeV2RouterAddr, amountIn, paths, deadline);
         } else if (dexId == dexIdPancakeV3) {
             _swapByPancakeV3(PancakeV3RouterAddr, amountIn, tokenIn, tokenOut, fee, deadline);
-        } 
+        } else if (dexId == dexIdCrystal) {
+            _swapByCrystal(CrystalRouterAddr, amountIn, paths, deadline);
+        }
         // else if (dexId == dexIdBaseSwapV2) {
         //     _swapByPancakeV2(BaseSwapV2RouterAddr, amountIn, paths, deadline);
         // } else if (dexId == dexIdBaseSwapV3) {
@@ -350,6 +364,16 @@ contract OneClickSwap {
 
         PancakeV3Router.ExactInputParam memory param = PancakeV3Router.ExactInputParam(path, address(this), deadline, amountIn, 0);
         PancakeV3Router(router).exactInput(param);
+    }
+
+    function _swapByCrystal(address router, uint256 amountIn, address[] memory paths, uint256 deadline) private {
+        // uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to, uint256 deadline
+        // UniV2Router(router).swapExactTokensForTokens(amountIn, 0, paths, address(this), deadline);
+        // CrystalRouter(router).swapExactTokensForTokens(amountIn, 0, paths, address(this), deadline, protocolFeeAccount);
+        // need approve to pool
+        address pool = CrystalRouter(router).getMarket(paths[0], paths[1]);
+        IERC20(paths[0]).safeIncreaseAllowance(pool, amountIn);
+        CrystalRouter(router).swapExactTokensForTokens(amountIn, 1, paths, address(this), deadline, protocolFeeAccount);
     }
 
     function _getAnotherToken(address[] memory paths, address token) pure private returns (address) {
